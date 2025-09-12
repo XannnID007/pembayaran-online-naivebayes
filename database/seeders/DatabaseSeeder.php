@@ -16,6 +16,7 @@ class DatabaseSeeder extends Seeder
             UserSeeder::class,
             JenisPembayaranSeeder::class,
             TagihanSeeder::class,
+            PembayaranSeeder::class, // Tambahkan seeder pembayaran
         ]);
     }
 }

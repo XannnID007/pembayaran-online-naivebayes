@@ -19,7 +19,7 @@ class NaiveBayesService
      protected $features = [
           'ketepatan_waktu', // early, ontime, late
           'frekuensi_bayar',  // high, medium, low
-          'jenis_pembayaran', // spp_only, uts_only, uas_only, spp_uts, spp_uas, uts_uas, all_types
+          'jenis_pembayaran', // spp_only, mixed, all_types
           'kelas'            // X, XI, XII
      ];
 
@@ -74,7 +74,7 @@ class NaiveBayesService
 
           foreach ($siswaList as $siswa) {
                $features = $this->extractFeatures($siswa);
-               $label = $this->determineLabel($siswa);
+               $label = $this->determineLabel($siswa, $features);
 
                if ($features && $label) {
                     $trainingData[] = [
@@ -95,20 +95,27 @@ class NaiveBayesService
                return null; // Tidak cukup data untuk analisis
           }
 
-          // 1. Ketepatan Waktu
+          // 1. Ketepatan Waktu - dengan logika yang diperbaiki
           $tepatWaktu = 0;
           $terlambat = 0;
           $totalPembayaran = 0;
+          $awalWaktu = 0; // Pembayaran yang dilakukan jauh sebelum deadline
 
           foreach ($tagihan as $t) {
                if ($t->status === 'sudah_bayar') {
                     $pembayaran = $t->pembayaran()->where('status_konfirmasi', 'confirmed')->first();
                     if ($pembayaran) {
                          $totalPembayaran++;
-                         if ($pembayaran->tanggal_bayar <= $t->deadline) {
-                              $tepatWaktu++;
+                         $daysDiff = $pembayaran->tanggal_bayar->diffInDays($t->deadline, false);
+                         
+                         if ($daysDiff > 0) { // Bayar sebelum deadline
+                              if ($daysDiff > 7) {
+                                   $awalWaktu++; // Bayar lebih dari seminggu sebelum deadline
+                              } else {
+                                   $tepatWaktu++; // Bayar mendekati deadline tapi masih tepat
+                              }
                          } else {
-                              $terlambat++;
+                              $terlambat++; // Bayar setelah deadline
                          }
                     }
                }
@@ -118,27 +125,29 @@ class NaiveBayesService
                return null;
           }
 
-          $persentaseTepatWaktu = ($tepatWaktu / $totalPembayaran) * 100;
+          // Logika klasifikasi ketepatan waktu yang lebih baik
+          $persentaseAwal = ($awalWaktu / $totalPembayaran) * 100;
+          $persentaseTepatWaktu = (($tepatWaktu + $awalWaktu) / $totalPembayaran) * 100;
 
           $ketepatanWaktu = 'late';
-          if ($persentaseTepatWaktu >= 80) {
+          if ($persentaseAwal >= 50) {
                $ketepatanWaktu = 'early';
-          } elseif ($persentaseTepatWaktu >= 50) {
+          } elseif ($persentaseTepatWaktu >= 70) {
                $ketepatanWaktu = 'ontime';
           }
 
-          // 2. Frekuensi Bayar
+          // 2. Frekuensi Bayar - dengan perhitungan yang lebih akurat
           $totalTagihan = $tagihan->count();
           $persentaseBayar = ($totalPembayaran / $totalTagihan) * 100;
 
           $frekuensiBayar = 'low';
-          if ($persentaseBayar >= 80) {
+          if ($persentaseBayar >= 85) {
                $frekuensiBayar = 'high';
-          } elseif ($persentaseBayar >= 50) {
+          } elseif ($persentaseBayar >= 60) {
                $frekuensiBayar = 'medium';
           }
 
-          // 3. Jenis Pembayaran
+          // 3. Jenis Pembayaran - dengan kategori yang disederhanakan
           $jenisBayar = $tagihan->where('status', 'sudah_bayar')
                ->pluck('jenisPembayaran.nama_pembayaran')
                ->unique()
@@ -147,17 +156,22 @@ class NaiveBayesService
                ->toArray();
 
           $jenisPembayaran = 'spp_only';
-          if (count($jenisBayar) === 3) {
+          if (count($jenisBayar) >= 3) {
                $jenisPembayaran = 'all_types';
-          } elseif (count($jenisBayar) === 2) {
-               sort($jenisBayar);
-               $jenisPembayaran = strtolower(implode('_', $jenisBayar));
-          } elseif (count($jenisBayar) === 1) {
-               $jenisPembayaran = strtolower($jenisBayar[0]) . '_only';
+          } elseif (count($jenisBayar) >= 2) {
+               $jenisPembayaran = 'mixed';
           }
 
-          // 4. Kelas
-          $kelas = substr($siswa->kelas, 0, strpos($siswa->kelas, ' ') ?: strlen($siswa->kelas));
+          // 4. Kelas - diperbaiki untuk menangani format yang beragam
+          $kelasRaw = $siswa->kelas;
+          $kelas = 'X';
+          if (strpos($kelasRaw, 'XII') !== false || strpos($kelasRaw, '12') !== false) {
+               $kelas = 'XII';
+          } elseif (strpos($kelasRaw, 'XI') !== false || strpos($kelasRaw, '11') !== false) {
+               $kelas = 'XI';
+          } elseif (strpos($kelasRaw, 'X') !== false || strpos($kelasRaw, '10') !== false) {
+               $kelas = 'X';
+          }
 
           return [
                'ketepatan_waktu' => $ketepatanWaktu,
@@ -167,41 +181,69 @@ class NaiveBayesService
           ];
      }
 
-     protected function determineLabel(Siswa $siswa)
+     protected function determineLabel(Siswa $siswa, $features)
      {
-          $features = $this->extractFeatures($siswa);
-
           if (!$features) {
                return null;
           }
 
-          // Logic untuk menentukan label berdasarkan kombinasi features
+          // Logic yang diperbaiki untuk menentukan label
           $ketepatanWaktu = $features['ketepatan_waktu'];
           $frekuensiBayar = $features['frekuensi_bayar'];
           $jenisPembayaran = $features['jenis_pembayaran'];
 
-          // Pembayar Disiplin: Tepat waktu + frekuensi tinggi + bayar semua jenis
-          if ($ketepatanWaktu === 'early' && $frekuensiBayar === 'high' && in_array($jenisPembayaran, ['all_types', 'spp_uts', 'spp_uas'])) {
-               return 'pembayar_disiplin';
+          // Skor untuk setiap kategori (0-3)
+          $skorDisiplin = 0;
+          $skorTerlambat = 0;
+          $skorSelektif = 0;
+
+          // Evaluasi ketepatan waktu
+          if ($ketepatanWaktu === 'early') {
+               $skorDisiplin += 3;
+          } elseif ($ketepatanWaktu === 'ontime') {
+               $skorDisiplin += 2;
+               $skorSelektif += 1;
+          } else {
+               $skorTerlambat += 3;
           }
 
-          // Pembayar Terlambat: Sering terlambat + frekuensi rendah
-          if ($ketepatanWaktu === 'late' || $frekuensiBayar === 'low') {
+          // Evaluasi frekuensi bayar
+          if ($frekuensiBayar === 'high') {
+               $skorDisiplin += 3;
+          } elseif ($frekuensiBayar === 'medium') {
+               $skorDisiplin += 1;
+               $skorSelektif += 2;
+          } else {
+               $skorTerlambat += 3;
+               $skorSelektif += 1;
+          }
+
+          // Evaluasi jenis pembayaran
+          if ($jenisPembayaran === 'all_types') {
+               $skorDisiplin += 3;
+          } elseif ($jenisPembayaran === 'mixed') {
+               $skorDisiplin += 1;
+               $skorSelektif += 2;
+          } else {
+               $skorSelektif += 3;
+               $skorTerlambat += 1;
+          }
+
+          // Tentukan label berdasarkan skor tertinggi
+          $maxSkor = max($skorDisiplin, $skorTerlambat, $skorSelektif);
+          
+          if ($skorDisiplin === $maxSkor) {
+               return 'pembayar_disiplin';
+          } elseif ($skorSelektif === $maxSkor) {
+               return 'pembayar_selektif';
+          } else {
                return 'pembayar_terlambat';
           }
-
-          // Pembayar Selektif: Hanya bayar jenis tertentu
-          if (in_array($jenisPembayaran, ['spp_only', 'uts_only', 'uas_only'])) {
-               return 'pembayar_selektif';
-          }
-
-          // Default ke terlambat jika tidak masuk kategori lain
-          return 'pembayar_terlambat';
      }
 
      public function trainModel($trainingData)
      {
-          // Hitung prior probability untuk setiap class
+          // Hitung prior probability untuk setiap class dengan Laplace smoothing
           $classCount = [];
           $totalSamples = count($trainingData);
 
@@ -215,33 +257,48 @@ class NaiveBayesService
 
           $priorProbabilities = [];
           foreach ($this->classes as $class) {
-               $priorProbabilities[$class] = $classCount[$class] / $totalSamples;
+               // Laplace smoothing untuk prior probability
+               $priorProbabilities[$class] = ($classCount[$class] + 1) / ($totalSamples + count($this->classes));
           }
 
-          // Hitung likelihood untuk setiap feature dan value
+          // Hitung likelihood untuk setiap feature dan value dengan Laplace smoothing
           $likelihoods = [];
+          $featureValues = [];
+
+          // Kumpulkan semua possible values untuk setiap feature
+          foreach ($this->features as $feature) {
+               $featureValues[$feature] = [];
+               foreach ($trainingData as $data) {
+                    $value = $data['features'][$feature];
+                    if (!in_array($value, $featureValues[$feature])) {
+                         $featureValues[$feature][] = $value;
+                    }
+               }
+          }
 
           foreach ($this->classes as $class) {
                $likelihoods[$class] = [];
+               $classData = array_filter($trainingData, function($data) use ($class) {
+                    return $data['label'] === $class;
+               });
+               $classSize = count($classData);
 
                foreach ($this->features as $feature) {
                     $likelihoods[$class][$feature] = [];
+                    $possibleValues = $featureValues[$feature];
+                    $vocabularySize = count($possibleValues);
 
-                    // Get all possible values for this feature
-                    $featureValues = [];
-                    foreach ($trainingData as $data) {
-                         if ($data['label'] === $class) {
-                              $featureValues[] = $data['features'][$feature];
+                    foreach ($possibleValues as $value) {
+                         // Hitung jumlah kemunculan value untuk class ini
+                         $count = 0;
+                         foreach ($classData as $data) {
+                              if ($data['features'][$feature] === $value) {
+                                   $count++;
+                              }
                          }
-                    }
 
-                    // Count occurrences
-                    $valueCounts = array_count_values($featureValues);
-                    $totalForClass = count($featureValues);
-
-                    // Calculate probabilities with Laplace smoothing
-                    foreach ($valueCounts as $value => $count) {
-                         $likelihoods[$class][$feature][$value] = ($count + 1) / ($totalForClass + 1);
+                         // Laplace smoothing
+                         $likelihoods[$class][$feature][$value] = ($count + 1) / ($classSize + $vocabularySize);
                     }
                }
           }
@@ -249,6 +306,7 @@ class NaiveBayesService
           return [
                'prior_probabilities' => $priorProbabilities,
                'likelihoods' => $likelihoods,
+               'feature_values' => $featureValues,
                'training_data_count' => $totalSamples
           ];
      }
@@ -258,38 +316,49 @@ class NaiveBayesService
           $posteriorProbabilities = [];
 
           foreach ($this->classes as $class) {
-               $probability = $model['prior_probabilities'][$class];
+               $probability = log($model['prior_probabilities'][$class]);
 
                foreach ($this->features as $feature) {
                     $featureValue = $features[$feature];
 
-                    // Use likelihood if exists, otherwise use small probability (Laplace smoothing)
+                    // Use likelihood if exists, otherwise use very small probability
                     if (isset($model['likelihoods'][$class][$feature][$featureValue])) {
-                         $probability *= $model['likelihoods'][$class][$feature][$featureValue];
+                         $likelihood = $model['likelihoods'][$class][$feature][$featureValue];
                     } else {
-                         $probability *= 0.01; // Small probability for unseen values
+                         // Laplace smoothing untuk unseen values
+                         $vocabularySize = count($model['feature_values'][$feature]);
+                         $likelihood = 1 / ($vocabularySize + 1);
                     }
+
+                    $probability += log($likelihood);
                }
 
                $posteriorProbabilities[$class] = $probability;
           }
 
-          // Normalize probabilities
-          $total = array_sum($posteriorProbabilities);
-          if ($total > 0) {
-               foreach ($posteriorProbabilities as $class => $prob) {
-                    $posteriorProbabilities[$class] = $prob / $total;
-               }
+          // Convert log probabilities back to normal probabilities
+          $maxLogProb = max($posteriorProbabilities);
+          $normalizedProbs = [];
+          $totalProb = 0;
+
+          foreach ($posteriorProbabilities as $class => $logProb) {
+               $normalizedProbs[$class] = exp($logProb - $maxLogProb);
+               $totalProb += $normalizedProbs[$class];
+          }
+
+          // Normalize to get actual probabilities
+          foreach ($normalizedProbs as $class => $prob) {
+               $normalizedProbs[$class] = $prob / $totalProb;
           }
 
           // Return class with highest probability
-          $predictedClass = array_keys($posteriorProbabilities, max($posteriorProbabilities))[0];
-          $confidence = $posteriorProbabilities[$predictedClass];
+          $predictedClass = array_keys($normalizedProbs, max($normalizedProbs))[0];
+          $confidence = $normalizedProbs[$predictedClass];
 
           return [
                'predicted_class' => $predictedClass,
                'confidence' => $confidence,
-               'probabilities' => $posteriorProbabilities
+               'probabilities' => $normalizedProbs
           ];
      }
 
@@ -298,12 +367,20 @@ class NaiveBayesService
           // Prepare training data
           $trainingData = $this->prepareTrainingData();
 
-          if (count($trainingData) < 10) {
-               throw new \Exception('Tidak cukup data untuk training. Minimal 10 data diperlukan. Saat ini hanya ' . count($trainingData) . ' data tersedia.');
+          if (count($trainingData) < 5) {
+               throw new \Exception('Tidak cukup data untuk training. Minimal 5 data diperlukan. Saat ini hanya ' . count($trainingData) . ' data tersedia.');
           }
 
           // Train model
           $model = $this->trainModel($trainingData);
+
+          // Debug: Log distribution of training data
+          $trainingDistribution = [];
+          foreach ($this->classes as $class) {
+               $trainingDistribution[$class] = count(array_filter($trainingData, function($data) use ($class) {
+                    return $data['label'] === $class;
+               }));
+          }
 
           // Classify all students
           $siswaList = Siswa::with(['tagihan.pembayaran', 'tagihan.jenisPembayaran'])->get();
@@ -324,7 +401,8 @@ class NaiveBayesService
                               'tanggal_prediksi' => Carbon::now(),
                               'detail_analisis' => [
                                    'features' => $features,
-                                   'probabilities' => $prediction['probabilities']
+                                   'probabilities' => $prediction['probabilities'],
+                                   'training_distribution' => $trainingDistribution
                               ]
                          ]
                     );
@@ -340,6 +418,7 @@ class NaiveBayesService
           return [
                'model_info' => [
                     'training_samples' => count($trainingData),
+                    'training_distribution' => $trainingDistribution,
                     'prior_probabilities' => $model['prior_probabilities']
                ],
                'classifications' => $results
