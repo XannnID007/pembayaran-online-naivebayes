@@ -26,14 +26,12 @@
         <div class="fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-gray-200 transform transition-transform duration-300 ease-in-out lg:translate-x-0"
             :class="{ '-translate-x-full': !sidebarOpen, 'translate-x-0': sidebarOpen }">
 
-            <!-- Logo/Brand -->
             <div class="flex items-center justify-center h-16 px-4 bg-primary-500 text-white">
-                <div class="flex items-center space-x-2">
-                    <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M12 2L2 7v10c0 5.55 3.84 9.74 9 11 5.16-1.26 9-5.45 9-11V7l-10-5z" />
-                    </svg>
+                <a href="{{ route('admin.dashboard') }}" class="flex items-center space-x-3">
+                    {{-- Ganti path ke logo Anda jika perlu --}}
+                    <img src="{{ asset('images/logo.jpeg') }}" alt="PaySchool Logo" class="h-8 w-auto">
                     <span class="text-lg font-semibold">PaySchool</span>
-                </div>
+                </a>
             </div>
 
             <!-- Navigation -->
@@ -160,17 +158,6 @@
 
                         <!-- Right side navbar content -->
                         <div class="flex items-center space-x-4">
-                            <!-- Notifications -->
-                            <button
-                                class="p-2 rounded-md text-gray-500 hover:text-gray-600 hover:bg-gray-100 relative">
-                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                        d="M15 17h5l-5 5v-5zM9 7h6a2 2 0 012 2v10a2 2 0 01-2 2H9a2 2 0 01-2-2V9a2 2 0 012-2z" />
-                                </svg>
-                                <span
-                                    class="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">3</span>
-                            </button>
-
                             <!-- User dropdown -->
                             <div class="relative" x-data="{ open: false }">
                                 <button @click="open = !open"

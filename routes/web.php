@@ -59,6 +59,7 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
 
     // Klasifikasi Naive Bayes
     Route::get('klasifikasi', [KlasifikasiController::class, 'index'])->name('klasifikasi');
+    Route::get('klasifikasi/{id}', [KlasifikasiController::class, 'show'])->name('klasifikasi.show');
     Route::post('klasifikasi/run', [KlasifikasiController::class, 'runClassification'])->name('klasifikasi.run');
 });
 

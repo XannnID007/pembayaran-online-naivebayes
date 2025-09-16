@@ -47,6 +47,13 @@ class KlasifikasiController extends Controller
         }
     }
 
+    public function show($id)
+    {
+        $klasifikasi = KlasifikasiSiswa::with('siswa')->findOrFail($id);
+
+        return response()->json($klasifikasi);
+    }
+
     public function runClassification(Request $request)
     {
         try {

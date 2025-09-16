@@ -2,14 +2,17 @@
 
 namespace App\Http\Controllers\Admin;
 
-use App\Http\Controllers\Controller;
-use App\Models\Pembayaran;
-use App\Models\Tagihan;
-use App\Models\Siswa;
-use App\Models\JenisPembayaran;
-use Illuminate\Http\Request;
 use Carbon\Carbon;
+use App\Models\Siswa;
+use App\Models\Tagihan;
+use Barryvdh\DomPDF\Facade\Pdf;
+use App\Models\Pembayaran;
+use Illuminate\Http\Request;
+use App\Models\JenisPembayaran;
 use Illuminate\Support\Facades\DB;
+use App\Http\Controllers\Controller;
+use Maatwebsite\Excel\Facades\Excel;
+use App\Exports\LaporanPembayaranExport;
 
 class LaporanController extends Controller
 {
@@ -176,9 +179,44 @@ class LaporanController extends Controller
 
     public function export(Request $request, $type)
     {
-        // Implementation for export (Excel/PDF)
-        // This would require additional packages like maatwebsite/excel or dompdf
+        $filter = [
+            'tanggal_mulai' => $request->get('tanggal_mulai', Carbon::now()->startOfMonth()->format('Y-m-d')),
+            'tanggal_selesai' => $request->get('tanggal_selesai', Carbon::now()->endOfMonth()->format('Y-m-d')),
+            'jenis_pembayaran_id' => $request->get('jenis_pembayaran_id'),
+            'kelas' => $request->get('kelas'),
+        ];
 
-        return response()->json(['message' => 'Export feature will be implemented']);
+        $pembayaranQuery = Pembayaran::with(['tagihan.siswa', 'tagihan.jenisPembayaran'])
+            ->confirmed()
+            ->whereBetween('tanggal_bayar', [$filter['tanggal_mulai'], $filter['tanggal_selesai']]);
+
+        if ($filter['jenis_pembayaran_id']) {
+            $pembayaranQuery->whereHas('tagihan', function ($q) use ($filter) {
+                $q->where('jenis_pembayaran_id', $filter['jenis_pembayaran_id']);
+            });
+        }
+
+        if ($filter['kelas']) {
+            $pembayaranQuery->whereHas('tagihan.siswa', function ($q) use ($filter) {
+                $q->where('kelas', $filter['kelas']);
+            });
+        }
+
+
+        $pembayaran = $pembayaranQuery->get();
+
+        $data = [
+            'pembayaran' => $pembayaran,
+            'filter' => $filter
+        ];
+
+        if ($type == 'excel') {
+            return Excel::download(new LaporanPembayaranExport($pembayaran), 'laporan-pembayaran.xlsx');
+        }
+
+        if ($type == 'pdf') {
+            $pdf = Pdf::loadView('admin.laporan.export', $data);
+            return $pdf->download('laporan-pembayaran.pdf');
+        }
     }
 }
